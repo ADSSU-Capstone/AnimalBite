@@ -11,7 +11,11 @@ from sklearn.naive_bayes import GaussianNB
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import make_scorer, accuracy_score, precision_score, recall_score, f1_score
 
-st.set_page_config(layout="wide", page_title="Dashboard")
+st.set_page_config(layout="wide", page_title="Animal Bite Risk Dashboard")
+
+st.title("Animal Bite Risk Classification in Agusan del Sur")
+st.markdown("A data-driven dashboard for rabies prevention and policy analysis.")
+st.markdown("---")
 
 def clean_text(text):
     if pd.isna(text):
@@ -25,20 +29,25 @@ def clean_text(text):
 @st.cache_data
 def load_data():
     df = pd.read_excel("AnimalBite-SurveyRespondents_AlmadinNalupa (2).xlsx", header=1)
-    # .map() is the modern pandas equivalent of the deprecated .applymap()
     df = df.map(clean_text)
-    
     df = df.replace(['n/a', 'N/A', 'na', 'N/a', 'None', ''], np.nan)
     
-    # Fix messy age categories
-    df['Age'] = df['Age'].astype(str).str.replace('–', '-').str.replace(' ', '')
-    df['Age'] = df['Age'].replace({
-        '2635': '26-35', '1825': '18-25', '3645': '36-45', '3646': '36-45'
-    })
+    # Deep clean the Age column to fix typos seen in the raw data
+    df['Age'] = df['Age'].astype(str).str.replace(' ', '').str.replace('–', '-')
+    age_map = {
+        '1825': '18-25', '2635': '26-35', '3645': '36-45', '3646': '36-45',
+        '46andabove': '46 and above', '56andabove': '56 and above'
+    }
+    df['Age'] = df['Age'].replace(age_map)
+    
+    # Deep clean Distance column
+    df['How far is the nearest animal bite center or hospital from your home?'] = \
+        df['How far is the nearest animal bite center or hospital from your home?'].astype(str).str.replace(' ', '')
     
     # Fix Pet Ownership anomaly
     df['Do you have pets at home?'] = df['Do you have pets at home?'].replace({'Female': np.nan})
     
+    # Re-apply title case globally
     for col in df.columns:
         if df[col].dtype == 'object':
             df[col] = df[col].str.title()
@@ -51,18 +60,18 @@ def calculate_risk_score(row):
     score = 0
     
     if pd.notna(row['Are your pets vaccinated against rabies?']):
-        if row['Are your pets vaccinated against rabies?'] in ['None Vaccinated', 'Not Sure']:
+        if str(row['Are your pets vaccinated against rabies?']).strip().lower() in ['none vaccinated', 'not sure']:
             score += 2
     elif row['Do you have pets at home?'] == 'Yes':
         score += 2
         
     if pd.notna(row['Do you interact with stray animals in your community?']):
-        if row['Do you interact with stray animals in your community?'] in ['Yes', 'Sometimes']:
+        if str(row['Do you interact with stray animals in your community?']).strip().lower() in ['yes', 'sometimes']:
             score += 2
             
     if pd.notna(row['I know the proper first aid steps to take immediately after an animal bite.']):
         try:
-            val = int(row['I know the proper first aid steps to take immediately after an animal bite.'])
+            val = int(float(row['I know the proper first aid steps to take immediately after an animal bite.']))
             if val <= 3:
                 score += 2
         except:
@@ -70,14 +79,15 @@ def calculate_risk_score(row):
             
     if pd.notna(row['I know where to seek medical treatment or go to an animal bite center after an incident.']):
         try:
-            val = int(row['I know where to seek medical treatment or go to an animal bite center after an incident.'])
+            val = int(float(row['I know where to seek medical treatment or go to an animal bite center after an incident.']))
             if val <= 3:
                 score += 2
         except:
             pass
             
     if pd.notna(row['How far is the nearest animal bite center or hospital from your home?']):
-        if row['How far is the nearest animal bite center or hospital from your home?'] in ['More than 30 km', '16-30 km']:
+        dist = str(row['How far is the nearest animal bite center or hospital from your home?']).strip().lower()
+        if 'morethan30' in dist or '16-30' in dist:
             score += 2
             
     return score
@@ -174,7 +184,7 @@ with tab4:
     st.pyplot(fig)
 
 with tab5:
-    st.subheader("Classification Model Performance (10-Fold Cross-Validation)")
+    st.subheader("Classification Model Performance (Cross-Validation)")
     
     features = [
         'Age', 'Sex', 'Do you have pets at home?', 
@@ -184,9 +194,15 @@ with tab5:
         'How far is the nearest animal bite center or hospital from your home?'
     ]
     
-    # Drop rows where the target or features are missing
     ml_df = df[features + ['Risk_Level']].dropna(subset=['Risk_Level']).copy()
     
+    for col in features:
+        if ml_df[col].dtype == 'object':
+            counts = ml_df[col].value_counts()
+            rare_cats = counts[counts < 3].index
+            ml_df[col] = ml_df[col].replace(rare_cats, 'Other')
+            ml_df[col] = ml_df[col].fillna('Unknown')
+
     le_dict = {}
     for col in features:
         if ml_df[col].dtype == 'object':
@@ -195,7 +211,7 @@ with tab5:
             le_dict[col] = le
             
     X = ml_df[features]
-    y = ml_df['Risk_Level']
+    y = ml_df['Risk_Level'].astype(str)
     
     models = {
         'Decision Tree': DecisionTreeClassifier(random_state=42, class_weight='balanced'),
@@ -204,8 +220,6 @@ with tab5:
     }
     
     results = []
-    # StratifiedKFold requires at least n_splits samples per class. 
-    # If a class has fewer than 10 samples, it will fail. We set n_splits to the minimum class count or 10.
     min_class_count = y.value_counts().min()
     n_splits = min(10, min_class_count) if min_class_count > 1 else 2
     
