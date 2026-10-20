@@ -32,7 +32,7 @@ def load_data():
     df = df.map(clean_text)
     df = df.replace(['n/a', 'N/A', 'na', 'N/a', 'None', ''], np.nan)
     
-    # Deep clean the Age column to fix typos seen in the raw data
+    # Fix Age typos
     df['Age'] = df['Age'].astype(str).str.replace(' ', '').str.replace('–', '-')
     age_map = {
         '1825': '18-25', '2635': '26-35', '3645': '36-45', '3646': '36-45',
@@ -40,14 +40,13 @@ def load_data():
     }
     df['Age'] = df['Age'].replace(age_map)
     
-    # Deep clean Distance column
+    # Fix Distance typos
     df['How far is the nearest animal bite center or hospital from your home?'] = \
         df['How far is the nearest animal bite center or hospital from your home?'].astype(str).str.replace(' ', '')
     
     # Fix Pet Ownership anomaly
     df['Do you have pets at home?'] = df['Do you have pets at home?'].replace({'Female': np.nan})
     
-    # Re-apply title case globally
     for col in df.columns:
         if df[col].dtype == 'object':
             df[col] = df[col].str.title()
@@ -58,7 +57,6 @@ df = load_data()
 
 def calculate_risk_score(row):
     score = 0
-    
     if pd.notna(row['Are your pets vaccinated against rabies?']):
         if str(row['Are your pets vaccinated against rabies?']).strip().lower() in ['none vaccinated', 'not sure']:
             score += 2
@@ -71,25 +69,20 @@ def calculate_risk_score(row):
             
     if pd.notna(row['I know the proper first aid steps to take immediately after an animal bite.']):
         try:
-            val = int(float(row['I know the proper first aid steps to take immediately after an animal bite.']))
-            if val <= 3:
+            if int(float(row['I know the proper first aid steps to take immediately after an animal bite.'])) <= 3:
                 score += 2
-        except:
-            pass
+        except: pass
             
     if pd.notna(row['I know where to seek medical treatment or go to an animal bite center after an incident.']):
         try:
-            val = int(float(row['I know where to seek medical treatment or go to an animal bite center after an incident.']))
-            if val <= 3:
+            if int(float(row['I know where to seek medical treatment or go to an animal bite center after an incident.'])) <= 3:
                 score += 2
-        except:
-            pass
+        except: pass
             
     if pd.notna(row['How far is the nearest animal bite center or hospital from your home?']):
         dist = str(row['How far is the nearest animal bite center or hospital from your home?']).strip().lower()
         if 'morethan30' in dist or '16-30' in dist:
             score += 2
-            
     return score
 
 df['Risk_Score'] = df.apply(calculate_risk_score, axis=1)
@@ -196,22 +189,20 @@ with tab5:
     
     ml_df = df[features + ['Risk_Level']].dropna(subset=['Risk_Level']).copy()
     
+    # Convert to safe numeric arrays to prevent crashes
     for col in features:
         if ml_df[col].dtype == 'object':
             counts = ml_df[col].value_counts()
             rare_cats = counts[counts < 3].index
             ml_df[col] = ml_df[col].replace(rare_cats, 'Other')
             ml_df[col] = ml_df[col].fillna('Unknown')
-
-    le_dict = {}
-    for col in features:
-        if ml_df[col].dtype == 'object':
             le = LabelEncoder()
             ml_df[col] = le.fit_transform(ml_df[col].astype(str))
-            le_dict[col] = le
-            
-    X = ml_df[features]
-    y = ml_df['Risk_Level'].astype(str)
+        else:
+            ml_df[col] = ml_df[col].fillna(ml_df[col].median())
+
+    X = ml_df[features].values
+    y = ml_df['Risk_Level'].astype(str).values
     
     models = {
         'Decision Tree': DecisionTreeClassifier(random_state=42, class_weight='balanced'),
@@ -220,38 +211,42 @@ with tab5:
     }
     
     results = []
-    min_class_count = y.value_counts().min()
-    n_splits = min(10, min_class_count) if min_class_count > 1 else 2
+    min_class_count = pd.Series(y).value_counts().min()
     
-    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-    
-    scoring = {
-        'accuracy': make_scorer(accuracy_score),
-        'precision': make_scorer(precision_score, average='weighted', zero_division=0),
-        'recall': make_scorer(recall_score, average='weighted', zero_division=0),
-        'f1': make_scorer(f1_score, average='weighted', zero_division=0)
-    }
-    
-    for name, model in models.items():
-        cv_results = cross_validate(model, X, y, cv=cv, scoring=scoring, error_score='raise')
-        results.append({
-            'Model': name,
-            'Accuracy': np.mean(cv_results['test_accuracy']),
-            'Precision': np.mean(cv_results['test_precision']),
-            'Recall': np.mean(cv_results['test_recall']),
-            'F1-Score': np.mean(cv_results['test_f1'])
-        })
+    # Dynamically adjust splits to prevent crash if data is too small
+    if min_class_count < 2:
+        st.warning("Not enough samples in each risk category to perform cross-validation.")
+    else:
+        n_splits = min(10, min_class_count)
+        cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
         
-    results_df = pd.DataFrame(results)
-    st.dataframe(results_df.style.format("{:.3f}", subset=['Accuracy', 'Precision', 'Recall', 'F1-Score']), hide_index=True)
-    
-    st.write("Feature Importance (Random Forest)")
-    rf = RandomForestClassifier(random_state=42, class_weight='balanced')
-    rf.fit(X, y)
-    importances = rf.feature_importances_
-    feat_imp = pd.DataFrame({'Feature': features, 'Importance': importances}).sort_values(by='Importance', ascending=False)
-    st.dataframe(feat_imp, hide_index=True)
-    
-    fig, ax = plt.subplots()
-    sns.barplot(data=feat_imp, x='Importance', y='Feature', ax=ax, palette='viridis')
-    st.pyplot(fig)
+        scoring = {
+            'accuracy': make_scorer(accuracy_score),
+            'precision': make_scorer(precision_score, average='weighted', zero_division=0),
+            'recall': make_scorer(recall_score, average='weighted', zero_division=0),
+            'f1': make_scorer(f1_score, average='weighted', zero_division=0)
+        }
+        
+        for name, model in models.items():
+            cv_results = cross_validate(model, X, y, cv=cv, scoring=scoring)
+            results.append({
+                'Model': name,
+                'Accuracy': np.mean(cv_results['test_accuracy']),
+                'Precision': np.mean(cv_results['test_precision']),
+                'Recall': np.mean(cv_results['test_recall']),
+                'F1-Score': np.mean(cv_results['test_f1'])
+            })
+            
+        results_df = pd.DataFrame(results)
+        st.dataframe(results_df.style.format("{:.3f}", subset=['Accuracy', 'Precision', 'Recall', 'F1-Score']), hide_index=True)
+        
+        st.write("Feature Importance (Random Forest)")
+        rf = RandomForestClassifier(random_state=42, class_weight='balanced')
+        rf.fit(X, y)
+        importances = rf.feature_importances_
+        feat_imp = pd.DataFrame({'Feature': features, 'Importance': importances}).sort_values(by='Importance', ascending=False)
+        st.dataframe(feat_imp, hide_index=True)
+        
+        fig, ax = plt.subplots()
+        sns.barplot(data=feat_imp, x='Importance', y='Feature', ax=ax, palette='viridis')
+        st.pyplot(fig)
