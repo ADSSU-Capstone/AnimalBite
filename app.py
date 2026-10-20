@@ -25,11 +25,19 @@ def clean_text(text):
 @st.cache_data
 def load_data():
     df = pd.read_excel("AnimalBite-SurveyRespondents_AlmadinNalupa (2).xlsx", header=1)
+    # .map() is the modern pandas equivalent of the deprecated .applymap()
     df = df.map(clean_text)
     
     df = df.replace(['n/a', 'N/A', 'na', 'N/a', 'None', ''], np.nan)
     
-    df['Age'] = df['Age'].replace({'18–25': '18-25'})
+    # Fix messy age categories
+    df['Age'] = df['Age'].astype(str).str.replace('–', '-').str.replace(' ', '')
+    df['Age'] = df['Age'].replace({
+        '2635': '26-35', '1825': '18-25', '3645': '36-45', '3646': '36-45'
+    })
+    
+    # Fix Pet Ownership anomaly
+    df['Do you have pets at home?'] = df['Do you have pets at home?'].replace({'Female': np.nan})
     
     for col in df.columns:
         if df[col].dtype == 'object':
@@ -89,6 +97,7 @@ with tab1:
         st.dataframe(age_counts, hide_index=True)
         fig, ax = plt.subplots()
         sns.barplot(data=age_counts, x='Age Group', y='Count', ax=ax, palette='viridis')
+        plt.xticks(rotation=45)
         st.pyplot(fig)
     with col2:
         st.write("Sex Distribution")
@@ -175,7 +184,8 @@ with tab5:
         'How far is the nearest animal bite center or hospital from your home?'
     ]
     
-    ml_df = df[features + ['Risk_Level']].dropna().copy()
+    # Drop rows where the target or features are missing
+    ml_df = df[features + ['Risk_Level']].dropna(subset=['Risk_Level']).copy()
     
     le_dict = {}
     for col in features:
@@ -188,13 +198,18 @@ with tab5:
     y = ml_df['Risk_Level']
     
     models = {
-        'Decision Tree': DecisionTreeClassifier(random_state=42),
-        'Random Forest': RandomForestClassifier(random_state=42),
+        'Decision Tree': DecisionTreeClassifier(random_state=42, class_weight='balanced'),
+        'Random Forest': RandomForestClassifier(random_state=42, class_weight='balanced'),
         'Naïve Bayes': GaussianNB()
     }
     
     results = []
-    cv = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
+    # StratifiedKFold requires at least n_splits samples per class. 
+    # If a class has fewer than 10 samples, it will fail. We set n_splits to the minimum class count or 10.
+    min_class_count = y.value_counts().min()
+    n_splits = min(10, min_class_count) if min_class_count > 1 else 2
+    
+    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
     
     scoring = {
         'accuracy': make_scorer(accuracy_score),
@@ -204,7 +219,7 @@ with tab5:
     }
     
     for name, model in models.items():
-        cv_results = cross_validate(model, X, y, cv=cv, scoring=scoring)
+        cv_results = cross_validate(model, X, y, cv=cv, scoring=scoring, error_score='raise')
         results.append({
             'Model': name,
             'Accuracy': np.mean(cv_results['test_accuracy']),
@@ -217,7 +232,7 @@ with tab5:
     st.dataframe(results_df.style.format("{:.3f}", subset=['Accuracy', 'Precision', 'Recall', 'F1-Score']), hide_index=True)
     
     st.write("Feature Importance (Random Forest)")
-    rf = RandomForestClassifier(random_state=42)
+    rf = RandomForestClassifier(random_state=42, class_weight='balanced')
     rf.fit(X, y)
     importances = rf.feature_importances_
     feat_imp = pd.DataFrame({'Feature': features, 'Importance': importances}).sort_values(by='Importance', ascending=False)
