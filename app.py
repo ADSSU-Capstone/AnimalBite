@@ -25,7 +25,7 @@ def clean_text(text):
 @st.cache_data
 def load_data():
     df = pd.read_excel("AnimalBite-SurveyRespondents_AlmadinNalupa (2).xlsx", header=1)
-    df = df.applymap(clean_text)
+    df = df.map(clean_text)
     
     df = df.replace(['n/a', 'N/A', 'na', 'N/a', 'None', ''], np.nan)
     
