@@ -25,7 +25,6 @@ def load_data():
             df[col] = df[col].astype(str).str.strip()
             df[col] = df[col].replace(['nan', 'None', 'N/A', 'n/a', 'N/a', ''], np.nan)
 
-    # Clean age and distance columns 
     df['Age'] = df['Age'].astype(str).str.replace(' ', '').str.replace('–', '-')
     df['Age'] = df['Age'].replace({'1825': '18-25', '2635': '26-35', '3645': '36-45', '3646': '36-45', '46andabove': '46 and above', '56andabove': '56 and above'})
     
@@ -171,20 +170,14 @@ with tab5:
     ml_df = df[features + ['Risk_Level']].dropna(subset=['Risk_Level']).copy()
     
     for col in features:
-        # Try converting to numeric, if it fails leave it as string
-        try:
-            ml_df[col] = pd.to_numeric(ml_df[col])
-        except ValueError:
-            pass
-            
-        if ml_df[col].dtype == 'object':
-            counts = ml_df[col].value_counts()
-            rare_cats = counts[counts < 3].index
-            ml_df[col] = ml_df[col].replace(rare_cats, 'Other')
-            ml_df[col] = ml_df[col].fillna('Unknown')
+        # If the column has less than 20 unique values, treat it as a category (text)
+        if ml_df[col].nunique() < 20:
+            ml_df[col] = ml_df[col].astype(str).fillna('Unknown')
             le = LabelEncoder()
-            ml_df[col] = le.fit_transform(ml_df[col].astype(str))
+            ml_df[col] = le.fit_transform(ml_df[col])
         else:
+            # If it has many values (like a Likert scale), force it to numeric
+            ml_df[col] = pd.to_numeric(ml_df[col], errors='coerce')
             ml_df[col] = ml_df[col].fillna(ml_df[col].median())
 
     X = ml_df[features].values
