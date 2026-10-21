@@ -171,9 +171,12 @@ with tab5:
     ml_df = df[features + ['Risk_Level']].dropna(subset=['Risk_Level']).copy()
     
     for col in features:
-        # Convert to numeric first. If it fails (because it's text), handle as text
-        ml_df[col] = pd.to_numeric(ml_df[col], errors='ignore')
-        
+        # Try converting to numeric, if it fails leave it as string
+        try:
+            ml_df[col] = pd.to_numeric(ml_df[col])
+        except ValueError:
+            pass
+            
         if ml_df[col].dtype == 'object':
             counts = ml_df[col].value_counts()
             rare_cats = counts[counts < 3].index
