@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import re
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.model_selection import cross_validate, StratifiedKFold
@@ -17,40 +16,22 @@ st.title("Animal Bite Risk Classification in Agusan del Sur")
 st.markdown("A data-driven dashboard for rabies prevention and policy analysis.")
 st.markdown("---")
 
-def clean_text(text):
-    if pd.isna(text):
-        return ""
-    text = str(text)
-    text = re.sub(r'[^\x00-\x7F]+', '', text)
-    text = text.strip()
-    text = re.sub(r'\s+', ' ', text)
-    return text
-
 @st.cache_data
 def load_data():
-    df = pd.read_excel("AnimalBite-SurveyRespondents_AlmadinNalupa (2).xlsx", header=1)
-    df = df.map(clean_text)
-    df = df.replace(['n/a', 'N/A', 'na', 'N/a', 'None', ''], np.nan)
-    
-    # Fix Age typos
-    df['Age'] = df['Age'].astype(str).str.replace(' ', '').str.replace('–', '-')
-    age_map = {
-        '1825': '18-25', '2635': '26-35', '3645': '36-45', '3646': '36-45',
-        '46andabove': '46 and above', '56andabove': '56 and above'
-    }
-    df['Age'] = df['Age'].replace(age_map)
-    
-    # Fix Distance typos
-    df['How far is the nearest animal bite center or hospital from your home?'] = \
-        df['How far is the nearest animal bite center or hospital from your home?'].astype(str).str.replace(' ', '')
-    
-    # Fix Pet Ownership anomaly
-    df['Do you have pets at home?'] = df['Do you have pets at home?'].replace({'Female': np.nan})
+    df = pd.read_excel("AnimalBite-SurveyRespondents_AlmadinNalupa-2.xlsx", header=1)
     
     for col in df.columns:
         if df[col].dtype == 'object':
-            df[col] = df[col].str.title()
-            
+            df[col] = df[col].astype(str).str.strip()
+            df[col] = df[col].replace(['nan', 'None', 'N/A', 'n/a', 'N/a', ''], np.nan)
+
+    # Clean age and distance columns 
+    df['Age'] = df['Age'].astype(str).str.replace(' ', '').str.replace('–', '-')
+    df['Age'] = df['Age'].replace({'1825': '18-25', '2635': '26-35', '3645': '36-45', '3646': '36-45', '46andabove': '46 and above', '56andabove': '56 and above'})
+    
+    df['How far is the nearest animal bite center or hospital from your home?'] = \
+        df['How far is the nearest animal bite center or hospital from your home?'].astype(str).str.replace(' ', '')
+
     return df
 
 df = load_data()
@@ -189,8 +170,10 @@ with tab5:
     
     ml_df = df[features + ['Risk_Level']].dropna(subset=['Risk_Level']).copy()
     
-    # Convert to safe numeric arrays to prevent crashes
     for col in features:
+        # Convert to numeric first. If it fails (because it's text), handle as text
+        ml_df[col] = pd.to_numeric(ml_df[col], errors='ignore')
+        
         if ml_df[col].dtype == 'object':
             counts = ml_df[col].value_counts()
             rare_cats = counts[counts < 3].index
@@ -212,41 +195,37 @@ with tab5:
     
     results = []
     min_class_count = pd.Series(y).value_counts().min()
+    n_splits = min(10, min_class_count) if min_class_count > 1 else 2
     
-    # Dynamically adjust splits to prevent crash if data is too small
-    if min_class_count < 2:
-        st.warning("Not enough samples in each risk category to perform cross-validation.")
-    else:
-        n_splits = min(10, min_class_count)
-        cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+    
+    scoring = {
+        'accuracy': make_scorer(accuracy_score),
+        'precision': make_scorer(precision_score, average='weighted', zero_division=0),
+        'recall': make_scorer(recall_score, average='weighted', zero_division=0),
+        'f1': make_scorer(f1_score, average='weighted', zero_division=0)
+    }
+    
+    for name, model in models.items():
+        cv_results = cross_validate(model, X, y, cv=cv, scoring=scoring)
+        results.append({
+            'Model': name,
+            'Accuracy': np.mean(cv_results['test_accuracy']),
+            'Precision': np.mean(cv_results['test_precision']),
+            'Recall': np.mean(cv_results['test_recall']),
+            'F1-Score': np.mean(cv_results['test_f1'])
+        })
         
-        scoring = {
-            'accuracy': make_scorer(accuracy_score),
-            'precision': make_scorer(precision_score, average='weighted', zero_division=0),
-            'recall': make_scorer(recall_score, average='weighted', zero_division=0),
-            'f1': make_scorer(f1_score, average='weighted', zero_division=0)
-        }
-        
-        for name, model in models.items():
-            cv_results = cross_validate(model, X, y, cv=cv, scoring=scoring)
-            results.append({
-                'Model': name,
-                'Accuracy': np.mean(cv_results['test_accuracy']),
-                'Precision': np.mean(cv_results['test_precision']),
-                'Recall': np.mean(cv_results['test_recall']),
-                'F1-Score': np.mean(cv_results['test_f1'])
-            })
-            
-        results_df = pd.DataFrame(results)
-        st.dataframe(results_df.style.format("{:.3f}", subset=['Accuracy', 'Precision', 'Recall', 'F1-Score']), hide_index=True)
-        
-        st.write("Feature Importance (Random Forest)")
-        rf = RandomForestClassifier(random_state=42, class_weight='balanced')
-        rf.fit(X, y)
-        importances = rf.feature_importances_
-        feat_imp = pd.DataFrame({'Feature': features, 'Importance': importances}).sort_values(by='Importance', ascending=False)
-        st.dataframe(feat_imp, hide_index=True)
-        
-        fig, ax = plt.subplots()
-        sns.barplot(data=feat_imp, x='Importance', y='Feature', ax=ax, palette='viridis')
-        st.pyplot(fig)
+    results_df = pd.DataFrame(results)
+    st.dataframe(results_df.style.format("{:.3f}", subset=['Accuracy', 'Precision', 'Recall', 'F1-Score']), hide_index=True)
+    
+    st.write("Feature Importance (Random Forest)")
+    rf = RandomForestClassifier(random_state=42, class_weight='balanced')
+    rf.fit(X, y)
+    importances = rf.feature_importances_
+    feat_imp = pd.DataFrame({'Feature': features, 'Importance': importances}).sort_values(by='Importance', ascending=False)
+    st.dataframe(feat_imp, hide_index=True)
+    
+    fig, ax = plt.subplots()
+    sns.barplot(data=feat_imp, x='Importance', y='Feature', ax=ax, palette='viridis')
+    st.pyplot(fig)
