@@ -69,7 +69,16 @@ def calculate_risk_score(row):
 df['Risk_Score'] = df.apply(calculate_risk_score, axis=1)
 df['Risk_Level'] = pd.cut(df['Risk_Score'], bins=[-1, 3, 7, 10], labels=['Low Risk', 'Moderate Risk', 'High Risk'])
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["Overview", "Risk Behaviors & Awareness", "Healthcare Access", "Risk Score Distribution", "Classification Models"])
+# Added the 2 new tabs here
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "Overview", 
+    "Risk Behaviors & Awareness", 
+    "Healthcare Access", 
+    "Risk Score Distribution", 
+    "Classification Models",
+    "Qualitative Insights",
+    "Policy Recommendations"
+])
 
 with tab1:
     st.subheader("Respondent Demographics")
@@ -224,3 +233,47 @@ with tab5:
     fig, ax = plt.subplots()
     sns.barplot(data=feat_imp, x='Importance', y='Feature', ax=ax, palette='viridis')
     st.pyplot(fig)
+
+with tab6:
+    st.subheader("Open-Ended Survey Responses")
+    st.markdown("This section displays the raw qualitative data gathered from the respondents.")
+    
+    q1 = 'What do you think are the most common causes of animal bites in your community?'
+    q2 = 'What suggestions can you give to help reduce animal bite incidents in your barangay?'
+    q3 = 'In your opinion, what additional facilities or resources does the Provincial Health Office need to improve animal bite prevention?'
+    
+    if q1 in df.columns:
+        st.write("**Common Causes of Animal Bites**")
+        responses_q1 = df[q1].dropna().value_counts().reset_index()
+        responses_q1.columns = ['Response', 'Frequency']
+        st.dataframe(responses_q1.head(15), hide_index=True) # Show top 15 to keep it clean
+        
+    if q2 in df.columns:
+        st.write("**Suggestions to Reduce Incidents**")
+        responses_q2 = df[q2].dropna().value_counts().reset_index()
+        responses_q2.columns = ['Response', 'Frequency']
+        st.dataframe(responses_q2.head(15), hide_index=True)
+        
+    if q3 in df.columns:
+        st.write("**Additional Facilities Needed**")
+        responses_q3 = df[q3].dropna().value_counts().reset_index()
+        responses_q3.columns = ['Response', 'Frequency']
+        st.dataframe(responses_q3.head(15), hide_index=True)
+
+with tab7:
+    st.subheader("Evidence-Based Policy Recommendations")
+    st.markdown("""
+    Based on the quantitative models and qualitative feedback, the following policy actions are recommended for the Provincial Health Office (PHO) and Local Government Units (LGUs):
+    
+    **1. Establishment of Local ABTCs and Mobile Vaccination**
+    *   *Data Basis:* The Healthcare Access tab shows a large portion of respondents live 16-30 km or more than 30 km away from an ABTC. Feature Importance shows distance as a top predictor of risk.
+    *   *Action:* Establish Animal Bite Treatment Centers (ABTCs) in high-risk, remote municipalities and deploy mobile vaccination units.
+    
+    **2. Mass Dog Vaccination and Stray Control**
+    *   *Data Basis:* A significant number of respondents report interacting with stray animals and having unvaccinated pets. The Qualitative Insights tab shows "Stray dogs roaming" as the most common cause of bites.
+    *   *Action:* Intensify mass dog vaccination campaigns (targeting 70% coverage) and enforce stricter barangay ordinances on stray animal impounding and responsible pet ownership (leashing).
+    
+    **3. Intensified Information and Education Campaigns (IEC)**
+    *   *Data Basis:* Awareness scores show that while respondents know rabies is transmitted by bites, knowledge of proper first aid and exact ABTC locations is moderate.
+    *   *Action:* Conduct barangay-level health education focusing on immediate wound washing (soap and water) and the importance of completing the Post-Exposure Prophylaxis (PEP) schedule.
+    """)
