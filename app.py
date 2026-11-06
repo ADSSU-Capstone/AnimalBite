@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
+import plotly.express as px
+import plotly.graph_objects as go
 import warnings
 from sklearn.model_selection import cross_validate, StratifiedKFold
 from sklearn.tree import DecisionTreeClassifier
@@ -17,30 +17,59 @@ st.set_page_config(layout="wide", page_title="Animal Bite Risk Dashboard", page_
 
 st.markdown("""
     <style>
-    .main {background-color: #f8f9fa;}
-    .stTabs [data-baseweb="tab-list"] {gap: 10px;}
+    .stApp { background-color: #f4f6f9; }
+    
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 15px;
+        background-color: transparent;
+    }
     .stTabs [data-baseweb="tab"] {
-        height: 50px;
+        height: 45px;
         white-space: pre-wrap;
         background-color: #ffffff;
         border-radius: 8px 8px 0px 0px;
         padding: 10px 20px;
-        box-shadow: 0px 2px 5px rgba(0,0,0,0.05);
+        border: 1px solid #e0e0e0;
+        border-bottom: none;
+        color: #555;
     }
     .stTabs [aria-selected="true"] {
         background-color: #0056b3 !important;
         color: white !important;
         font-weight: bold;
+        border: 1px solid #0056b3;
     }
+    
     div[data-testid="metric-container"] {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0px 4px 10px rgba(0,0,0,0.05);
+        border-left: 5px solid #0056b3;
+    }
+    div[data-testid="metric-container"] > div > div > div {
+        font-size: 2rem;
+        color: #2c3e50;
+    }
+    
+    h1, h2, h3 { color: #1e3a8a; }
+    
+    .caption-text {
+        font-size: 0.8rem; 
+        color: #666666; 
+        margin-top: -15px; 
+        margin-bottom: 25px;
+        font-style: italic;
+    }
+    
+    .plot-container {
+        background-color: white;
         padding: 15px;
         border-radius: 10px;
-        box-shadow: 0px 4px 6px rgba(0,0,0,0.05);
-        text-align: center;
+        box-shadow: 0px 2px 8px rgba(0,0,0,0.04);
+        border: 1px solid #e0e0e0;
     }
-    h1, h2, h3 {color: #2c3e50;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -53,21 +82,21 @@ uploaded_file = st.sidebar.file_uploader("Upload Survey Dataset (Excel)", type=[
 
 if uploaded_file is not None:
     try:
-        df = pd.read_excel(uploaded_file, header=1)
+        df_raw = pd.read_excel(uploaded_file, header=1)
         
-        for col in df.columns:
-            if df[col].dtype == 'object':
-                df[col] = df[col].astype(str).str.strip()
-                df[col] = df[col].replace(['nan', 'None', 'N/A', 'n/a', 'N/a', ''], np.nan)
+        for col in df_raw.columns:
+            if df_raw[col].dtype == 'object':
+                df_raw[col] = df_raw[col].astype(str).str.strip()
+                df_raw[col] = df_raw[col].replace(['nan', 'None', 'N/A', 'n/a', 'N/a', ''], np.nan)
 
-        if 'Age' in df.columns:
-            df['Age'] = df['Age'].astype(str).str.replace(' ', '').str.replace('–', '-')
+        if 'Age' in df_raw.columns:
+            df_raw['Age'] = df_raw['Age'].astype(str).str.replace(' ', '').str.replace('–', '-')
             age_dict = {'1825': '18-25', '2635': '26-35', '3645': '36-45', '3646': '36-45', '46andabove': '46 and above', '56andabove': '56 and above'}
-            df['Age'] = df['Age'].replace(age_dict)
+            df_raw['Age'] = df_raw['Age'].replace(age_dict)
         
         dist_col = 'How far is the nearest animal bite center or hospital from your home?'
-        if dist_col in df.columns:
-            df[dist_col] = df[dist_col].astype(str).str.replace(' ', '')
+        if dist_col in df_raw.columns:
+            df_raw[dist_col] = df_raw[dist_col].astype(str).str.replace(' ', '')
 
     except Exception as e:
         st.error(f"Error loading file. Please ensure it is the correct Excel format. Details: {e}")
@@ -107,8 +136,26 @@ def calculate_risk_score(row):
             
     return score
 
-df['Risk_Score'] = df.apply(calculate_risk_score, axis=1)
-df['Risk_Level'] = pd.cut(df['Risk_Score'], bins=[-1, 3, 7, 10], labels=['Low Risk', 'Moderate Risk', 'High Risk'])
+df_raw['Risk_Score'] = df_raw.apply(calculate_risk_score, axis=1)
+df_raw['Risk_Level'] = pd.cut(df_raw['Risk_Score'], bins=[-1, 3, 7, 10], labels=['Low Risk', 'Moderate Risk', 'High Risk'])
+
+st.sidebar.markdown("---")
+st.sidebar.header("Interactive Filters")
+
+muni_options = df_raw['Municipality in Agusan del Sur'].dropna().unique().tolist()
+selected_munis = st.sidebar.multiselect("Filter by Municipality", options=muni_options, default=muni_options)
+
+age_options = df_raw['Age'].dropna().unique().tolist()
+selected_ages = st.sidebar.multiselect("Filter by Age Group", options=age_options, default=age_options)
+
+sex_options = df_raw['Sex'].dropna().unique().tolist()
+selected_sex = st.sidebar.multiselect("Filter by Sex", options=sex_options, default=sex_options)
+
+df = df_raw[
+    (df_raw['Municipality in Agusan del Sur'].isin(selected_munis)) &
+    (df_raw['Age'].isin(selected_ages)) &
+    (df_raw['Sex'].isin(selected_sex))
+].copy()
 
 total_respondents = len(df)
 high_risk_count = len(df[df['Risk_Level'] == 'High Risk'])
@@ -116,10 +163,10 @@ high_risk_pct = (high_risk_count / total_respondents) * 100 if total_respondents
 bitten_count = len(df[df['Have you experienced an animal bite or scratch in the LAST 12 MONTHS?'] == 'Yes'])
 
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-kpi1.metric("Total Respondents", f"{total_respondents}")
+kpi1.metric("Filtered Respondents", f"{total_respondents}")
 kpi2.metric("Bitten in Last 12 Mos.", f"{bitten_count}")
 kpi3.metric("High Risk Respondents", f"{high_risk_count} ({high_risk_pct:.1f}%)")
-kpi4.metric("Municipalities Covered", df['Municipality in Agusan del Sur'].nunique())
+kpi4.metric("Municipalities Selected", len(selected_munis))
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -138,39 +185,46 @@ with tab1:
     
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("**Age Distribution**")
-        st.markdown("This figure displays the age distribution of the respondents, which is vital for understanding the demographic vulnerabilities, especially since the literature notes that children and young adults are highly susceptible to animal bites.")
-        age_counts = df['Age'].value_counts().reset_index()
-        age_counts.columns = ['Age Group', 'Count']
-        fig, ax = plt.subplots(figsize=(8, 4))
-        sns.barplot(data=age_counts, x='Age Group', y='Count', palette='viridis', ax=ax)
-        plt.xticks(rotation=45)
-        st.pyplot(fig)
+        with st.container(border=True):
+            st.markdown("**Age Distribution**")
+            age_counts = df['Age'].value_counts().reset_index()
+            age_counts.columns = ['Age Group', 'Count']
+            fig_age = px.bar(age_counts, x='Age Group', y='Count', color='Age Group', 
+                             color_discrete_sequence=px.colors.qualitative.Pastel, template='plotly_white')
+            fig_age.update_layout(showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
+            st.plotly_chart(fig_age, use_container_width=True)
+            st.caption("This figure displays the age distribution of the respondents, which is vital for understanding demographic vulnerabilities in the study.")
         
-        st.markdown("**Sex Distribution**")
-        st.markdown("This chart illustrates the sex distribution of the survey participants, providing a baseline for analyzing if certain genders exhibit higher risk behaviors or exposure to animal bites.")
-        sex_counts = df['Sex'].value_counts().reset_index()
-        sex_counts.columns = ['Sex', 'Count']
-        fig, ax = plt.subplots(figsize=(6, 4))
-        sns.barplot(data=sex_counts, x='Sex', y='Count', palette='magma', ax=ax)
-        st.pyplot(fig)
+        with st.container(border=True):
+            st.markdown("**Sex Distribution**")
+            sex_counts = df['Sex'].value_counts().reset_index()
+            sex_counts.columns = ['Sex', 'Count']
+            fig_sex = px.pie(sex_counts, names='Sex', values='Count', hole=0.4, 
+                             color_discrete_sequence=px.colors.qualitative.Set2)
+            fig_sex.update_layout(margin=dict(l=0, r=0, t=10, b=0))
+            st.plotly_chart(fig_sex, use_container_width=True)
+            st.caption("This chart illustrates the sex distribution of the survey participants, providing a baseline for analyzing risk behaviors.")
         
     with col2:
-        st.markdown("**Respondents per Municipality**")
-        st.markdown("This graph shows the proportional distribution of the 400 respondents across the 14 municipalities of Agusan del Sur, confirming the implementation of the proportional stratified sampling technique.")
-        muni_counts = df['Municipality in Agusan del Sur'].value_counts().reset_index()
-        muni_counts.columns = ['Municipality', 'Count']
-        fig, ax = plt.subplots(figsize=(8, 6))
-        sns.barplot(data=muni_counts, y='Municipality', x='Count', palette='Blues_d', ax=ax)
-        st.pyplot(fig)
-        
-        st.markdown("**Pet Ownership**")
-        st.markdown("This figure indicates the number of respondents who own pets at home, which is a major determinant of animal bite risk as unvaccinated household pets create risky environments.")
-        pet_counts = df['Do you have pets at home?'].value_counts().reset_index()
-        pet_counts.columns = ['Owns Pet', 'Count']
-        fig, ax = plt.subplots(figsize=(6, 3))
-        sns.barplot(data=pet_counts, x='Owns Pet', y='Count', palette='Set2', ax=ax)
-        st.pyplot(fig)
+        with st.container(border=True):
+            st.markdown("**Respondents per Municipality**")
+            muni_counts = df['Municipality in Agusan del Sur'].value_counts().reset_index()
+            muni_counts.columns = ['Municipality', 'Count']
+            fig_muni = px.bar(muni_counts, x='Count', y='Municipality', orientation='h', 
+                              color='Count', color_continuous_scale='Blues', template='plotly_white')
+            fig_muni.update_layout(coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0))
+            st.plotly_chart(fig_muni, use_container_width=True)
+            st.caption("This graph shows the distribution of respondents across the selected municipalities, confirming the implementation of proportional stratified sampling.")
+            
+        with st.container(border=True):
+            st.markdown("**Pet Ownership**")
+            pet_counts = df['Do you have pets at home?'].value_counts().reset_index()
+            pet_counts.columns = ['Owns Pet', 'Count']
+            fig_pet = px.pie(pet_counts, names='Owns Pet', values='Count', color='Owns Pet',
+                             color_discrete_map={'Yes': '#2ecc71', 'No': '#e74c3c'})
+            fig_pet.update_layout(margin=dict(l=0, r=0, t=10, b=0))
+            st.plotly_chart(fig_pet, use_container_width=True)
+            st.caption("This figure indicates the number of respondents who own pets at home, a major determinant of animal bite risk.")
 
 with tab2:
     st.subheader("Awareness and Risk Behaviors")
@@ -190,81 +244,124 @@ with tab2:
             
     valid_awareness = [c for c in awareness_cols if c in df.columns]
     if valid_awareness:
-        st.markdown("**Mean Awareness Scores (1-5)**")
-        st.markdown("This figure reflects the respondents' level of awareness regarding rabies transmission, first aid, and ABTC locations, which are critical components of the risk score calculation.")
-        awareness_means = df[valid_awareness].mean().reset_index()
-        awareness_means.columns = ['Awareness Statement', 'Mean Score (1-5)']
-        
-        fig, ax = plt.subplots(figsize=(10, 5))
-        sns.barplot(data=awareness_means, y='Awareness Statement', x='Mean Score (1-5)', palette='Blues_d', ax=ax)
-        ax.set_xlim(0, 5)
-        for i in ax.containers:
-            ax.bar_label(i, fmt='%.2f', padding=3)
-        st.pyplot(fig)
+        with st.container(border=True):
+            st.markdown("**Mean Awareness Scores (1-5 Likert Scale)**")
+            awareness_means = df[valid_awareness].mean().reset_index()
+            awareness_means.columns = ['Awareness Statement', 'Mean Score']
+            awareness_means = awareness_means.sort_values(by='Mean Score', ascending=True)
+            
+            fig_aware = px.bar(awareness_means, x='Mean Score', y='Awareness Statement', orientation='h',
+                               color='Mean Score', color_continuous_scale='Teal', text_auto='.2f', template='plotly_white')
+            fig_aware.update_layout(xaxis_range=[0, 5], coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0))
+            st.plotly_chart(fig_aware, use_container_width=True)
+            st.caption("This figure reflects the respondents' level of awareness regarding rabies transmission, first aid, and ABTC locations, which are critical inputs for the risk score.")
     
-    st.markdown("**Interaction with Stray Animals**")
-    st.markdown("This chart shows how frequently respondents interact with stray animals, a behavior that directly adds to the risk score due to the high probability of rabies transmission from unvaccinated strays.")
+    st.markdown("<br>", unsafe_allow_html=True)
+    
     stray_col = 'Do you interact with stray animals in your community?'
     if stray_col in df.columns:
-        stray_counts = df[stray_col].value_counts().reset_index()
-        stray_counts.columns = ['Interaction', 'Count']
-        fig, ax = plt.subplots(figsize=(8, 4))
-        sns.barplot(data=stray_counts, x='Interaction', y='Count', palette='Oranges', ax=ax)
-        st.pyplot(fig)
+        with st.container(border=True):
+            st.markdown("**Interaction with Stray Animals**")
+            stray_counts = df[stray_col].value_counts().reset_index()
+            stray_counts.columns = ['Interaction', 'Count']
+            fig_stray = px.bar(stray_counts, x='Interaction', y='Count', color='Interaction',
+                               color_discrete_sequence=px.colors.qualitative.Vivid, template='plotly_white')
+            fig_stray.update_layout(showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
+            st.plotly_chart(fig_stray, use_container_width=True)
+            st.caption("This chart shows how frequently respondents interact with stray animals, a behavior that directly adds to the risk score due to high exposure.")
 
 with tab3:
     st.subheader("Healthcare Access and ABTC Availability")
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("**Distance to Nearest ABTC**")
-        st.markdown("This figure highlights the geographical accessibility of Animal Bite Treatment Centers, where distances over 10 km directly contribute to higher risk scores in the study's framework.")
-        if dist_col in df.columns:
-            dist_counts = df[dist_col].value_counts().reset_index()
-            dist_counts.columns = ['Distance', 'Count']
-            fig, ax = plt.subplots(figsize=(8, 5))
-            sns.barplot(data=dist_counts, x='Distance', y='Count', palette='Oranges', ax=ax)
-            plt.xticks(rotation=45)
-            st.pyplot(fig)
+        with st.container(border=True):
+            st.markdown("**Distance to Nearest ABTC**")
+            if dist_col in df.columns:
+                dist_counts = df[dist_col].value_counts().reset_index()
+                dist_counts.columns = ['Distance', 'Count']
+                fig_dist = px.pie(dist_counts, names='Distance', values='Count', hole=0.4,
+                                  color_discrete_sequence=px.colors.sequential.Oranges_r)
+                fig_dist.update_layout(margin=dict(l=0, r=0, t=10, b=0))
+                st.plotly_chart(fig_dist, use_container_width=True)
+                st.caption("This figure highlights geographical accessibility. Distances over 10 km directly contribute to higher risk scores in the study's framework.")
             
     with col2:
-        st.markdown("**Vaccine Availability**")
-        st.markdown("This chart reveals whether anti-rabies vaccines were available when respondents sought treatment, underscoring potential systemic gaps in healthcare delivery and stockouts mentioned in the literature.")
-        vac_col = 'Were anti-rabies vaccines available when you sought treatment after a bite?'
-        if vac_col in df.columns:
-            vac_avail = df[vac_col].value_counts().reset_index()
-            vac_avail.columns = ['Availability', 'Count']
-            fig, ax = plt.subplots(figsize=(8, 5))
-            sns.barplot(data=vac_avail, x='Availability', y='Count', palette='Reds', ax=ax)
-            plt.xticks(rotation=45)
-            st.pyplot(fig)
+        with st.container(border=True):
+            st.markdown("**Vaccine Availability**")
+            vac_col = 'Were anti-rabies vaccines available when you sought treatment after a bite?'
+            if vac_col in df.columns:
+                vac_avail = df[vac_col].value_counts().reset_index()
+                vac_avail.columns = ['Availability', 'Count']
+                fig_vac = px.bar(vac_avail, x='Availability', y='Count', color='Availability',
+                                 color_discrete_sequence=px.colors.qualitative.Safe, template='plotly_white')
+                fig_vac.update_layout(showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
+                st.plotly_chart(fig_vac, use_container_width=True)
+                st.caption("This chart reveals whether anti-rabies vaccines were available, underscoring potential systemic gaps and stockouts in healthcare delivery.")
 
 with tab4:
-    st.subheader("Risk Level Distribution by Municipality")
+    st.subheader("Risk Level Distribution")
     
     col1, col2 = st.columns([1, 2])
     with col1:
-        st.markdown("**Overall Risk Levels**")
-        st.markdown("This chart categorizes respondents into Low, Moderate, and High-risk groups based on the study's scoring matrix, providing a baseline for targeted interventions.")
-        risk_counts = df['Risk_Level'].value_counts().reset_index()
-        risk_counts.columns = ['Risk Level', 'Count']
-        fig, ax = plt.subplots(figsize=(6, 4))
-        sns.barplot(data=risk_counts, x='Risk Level', y='Count', palette='coolwarm', ax=ax)
-        st.pyplot(fig)
+        with st.container(border=True):
+            st.markdown("**Overall Risk Levels**")
+            risk_counts = df['Risk_Level'].value_counts().reset_index()
+            risk_counts.columns = ['Risk Level', 'Count']
+            fig_risk = px.pie(risk_counts, names='Risk Level', values='Count', hole=0.5,
+                              color='Risk Level', color_discrete_map={'Low Risk': '#2ecc71', 'Moderate Risk': '#f1c40f', 'High Risk': '#e74c3c'})
+            fig_risk.update_layout(margin=dict(l=0, r=0, t=10, b=0))
+            st.plotly_chart(fig_risk, use_container_width=True)
+            st.caption("This chart categorizes respondents into Low, Moderate, and High-risk groups based on the study's scoring matrix.")
         
     with col2:
-        st.markdown("**Risk Level by Municipality**")
-        st.markdown("This cross-tabulation identifies which municipalities have the highest concentration of high-risk individuals, allowing local health units to prioritize resources and interventions.")
-        muni_risk = pd.crosstab(df['Municipality in Agusan del Sur'], df['Risk_Level'])
-        fig, ax = plt.subplots(figsize=(10, 5))
-        muni_risk.plot(kind='bar', stacked=True, color=['#2ecc71', '#f1c40f', '#e74c3c'], ax=ax)
-        plt.xticks(rotation=45, ha='right')
-        plt.ylabel("Number of Respondents")
-        plt.legend(title='Risk Level', bbox_to_anchor=(1.05, 1), loc='upper left')
-        st.pyplot(fig)
+        with st.container(border=True):
+            st.markdown("**Risk Level by Municipality (Stacked)**")
+            muni_risk = pd.crosstab(df['Municipality in Agusan del Sur'], df['Risk_Level'])
+            fig_muni_risk = px.bar(muni_risk, barmode='stack', 
+                                   color_discrete_map={'Low Risk': '#2ecc71', 'Moderate Risk': '#f1c40f', 'High Risk': '#e74c3c'},
+                                   template='plotly_white')
+            fig_muni_risk.update_layout(xaxis_title="Municipality", yaxis_title="Number of Respondents", margin=dict(l=0, r=0, t=10, b=0), legend_title="Risk Level")
+            st.plotly_chart(fig_muni_risk, use_container_width=True)
+            st.caption("This cross-tabulation identifies which municipalities have the highest concentration of high-risk individuals for prioritized interventions.")
+            
+    st.markdown("---")
+    st.subheader("Interactive What-If Risk Calculator")
+    st.markdown("Adjust the variables below to see how they affect the overall risk score based on the 5-variable scoring matrix.")
+    
+    rc1, rc2, rc3, rc4, rc5 = st.columns(5)
+    with rc1:
+        pet_vax = st.selectbox("Pet Vaccinated?", ["Yes", "No / Not Sure"], index=1)
+    with rc2:
+        stray_int = st.selectbox("Interacts with Strays?", ["Yes / Sometimes", "No"], index=0)
+    with rc3:
+        first_aid = st.slider("First Aid Knowledge (1-5)", 1, 5, 2)
+    with rc4:
+        pep_aware = st.slider("PEP Awareness (1-5)", 1, 5, 2)
+    with rc5:
+        abtc_dist = st.selectbox("Distance to ABTC", ["< 10 km", "> 10 km"], index=1)
+        
+    calc_score = 0
+    if pet_vax == "No / Not Sure": calc_score += 2
+    if stray_int == "Yes / Sometimes": calc_score += 2
+    if first_aid <= 3: calc_score += 2
+    if pep_aware <= 3: calc_score += 2
+    if abtc_dist == "> 10 km": calc_score += 2
+    
+    if calc_score <= 3:
+        calc_risk = "Low Risk"
+        color = "green"
+    elif calc_score <= 7:
+        calc_risk = "Moderate Risk"
+        color = "orange"
+    else:
+        calc_risk = "High Risk"
+        color = "red"
+        
+    st.markdown(f"**Calculated Score:** {calc_score} / 10 &nbsp;&nbsp;|&nbsp;&nbsp; **Risk Level:** <span style='color:{color}; font-weight:bold; font-size:1.2rem;'>{calc_risk}</span>", unsafe_allow_html=True)
+    st.caption("This interactive tool demonstrates how the 5 independent variables from the methodology combine to assign a risk category.")
 
 with tab5:
     st.subheader("Machine Learning Classification Models")
-    st.markdown("This table displays the performance metrics of the Decision Tree, Random Forest, and Naive Bayes models using 10-fold cross-validation to identify the most effective algorithm for predicting animal bite risk levels.")
     
     features = [
         'Age', 'Sex', 'Do you have pets at home?', 
@@ -322,23 +419,25 @@ with tab5:
             
         results_df = pd.DataFrame(results).sort_values(by='F1-Score', ascending=False)
         st.dataframe(results_df.style.format("{:.3f}", subset=['Accuracy', 'Precision', 'Recall', 'F1-Score']).highlight_max(color='lightgreen', axis=0), use_container_width=True)
+        st.caption("This table displays the performance metrics of the three models using cross-validation to identify the most effective algorithm for predicting risk levels.")
         
-        st.markdown("**Feature Importance (Random Forest)**")
-        st.markdown("This figure highlights the most influential variables in predicting animal bite risk, supporting evidence-based prioritization for health programs such as vaccination drives and education campaigns.")
-        rf = RandomForestClassifier(random_state=42, class_weight='balanced')
-        rf.fit(X, y)
-        importances = rf.feature_importances_
-        feat_imp = pd.DataFrame({'Feature': features, 'Importance': importances}).sort_values(by='Importance', ascending=False)
-        
-        fig, ax = plt.subplots(figsize=(10, 5))
-        sns.barplot(data=feat_imp, x='Importance', y='Feature', palette='viridis', ax=ax)
-        st.pyplot(fig)
+        with st.container(border=True):
+            st.markdown("**Feature Importance (Random Forest)**")
+            rf = RandomForestClassifier(random_state=42, class_weight='balanced')
+            rf.fit(X, y)
+            importances = rf.feature_importances_
+            feat_imp = pd.DataFrame({'Feature': features, 'Importance': importances}).sort_values(by='Importance', ascending=False)
+            
+            fig_feat = px.bar(feat_imp, x='Importance', y='Feature', orientation='h', 
+                              color='Importance', color_continuous_scale='Viridis', template='plotly_white')
+            fig_feat.update_layout(coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0))
+            st.plotly_chart(fig_feat, use_container_width=True)
+            st.caption("This figure highlights the most influential variables in predicting animal bite risk, supporting evidence-based prioritization for health programs.")
     else:
-        st.warning("Not enough data or classes to train models.")
+        st.warning("Not enough data or classes to train models based on the current filters.")
 
 with tab6:
     st.subheader("Open-Ended Survey Responses")
-    st.markdown("This section summarizes the top qualitative responses from the community, providing context to the quantitative findings and highlighting specific local issues like stray dogs and vaccine shortages.")
     
     q1 = 'What do you think are the most common causes of animal bites in your community?'
     q2 = 'What suggestions can you give to help reduce animal bite incidents in your barangay?'
@@ -346,38 +445,53 @@ with tab6:
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        if q1 in df.columns:
-            st.markdown("**Common Causes**")
-            responses_q1 = df[q1].dropna().value_counts().reset_index()
-            responses_q1.columns = ['Response', 'Frequency']
-            st.dataframe(responses_q1.head(10), hide_index=True, use_container_width=True)
+        with st.container(border=True):
+            if q1 in df.columns:
+                st.markdown("**Common Causes**")
+                responses_q1 = df[q1].dropna().value_counts().reset_index()
+                responses_q1.columns = ['Response', 'Frequency']
+                st.dataframe(responses_q1.head(10), hide_index=True, use_container_width=True)
+                st.caption("Highlights community perceptions of bite causes, often pointing to stray animals and irresponsible ownership.")
     with col2:
-        if q2 in df.columns:
-            st.markdown("**Suggestions to Reduce Incidents**")
-            responses_q2 = df[q2].dropna().value_counts().reset_index()
-            responses_q2.columns = ['Response', 'Frequency']
-            st.dataframe(responses_q2.head(10), hide_index=True, use_container_width=True)
+        with st.container(border=True):
+            if q2 in df.columns:
+                st.markdown("**Suggestions to Reduce Incidents**")
+                responses_q2 = df[q2].dropna().value_counts().reset_index()
+                responses_q2.columns = ['Response', 'Frequency']
+                st.dataframe(responses_q2.head(10), hide_index=True, use_container_width=True)
+                st.caption("Captures local recommendations for prevention, such as vaccination drives and leash enforcement.")
     with col3:
-        if q3 in df.columns:
-            st.markdown("**Facilities Needed**")
-            responses_q3 = df[q3].dropna().value_counts().reset_index()
-            responses_q3.columns = ['Response', 'Frequency']
-            st.dataframe(responses_q3.head(10), hide_index=True, use_container_width=True)
+        with st.container(border=True):
+            if q3 in df.columns:
+                st.markdown("**Facilities Needed**")
+                responses_q3 = df[q3].dropna().value_counts().reset_index()
+                responses_q3.columns = ['Response', 'Frequency']
+                st.dataframe(responses_q3.head(10), hide_index=True, use_container_width=True)
+                st.caption("Identifies immediate resource gaps felt by the community, primarily better access to vaccines and nearby ABTCs.")
 
 with tab7:
     st.subheader("Evidence-Based Policy Recommendations")
-    st.markdown("""
-    Based on the quantitative models and qualitative feedback, the following policy actions are recommended for the Provincial Health Office (PHO) and Local Government Units (LGUs):
     
-    **1. Establishment of Local ABTCs and Mobile Vaccination**
-    The Healthcare Access tab shows a large portion of respondents live 16-30 km or more than 30 km away from an ABTC. Feature Importance identifies distance as a top predictor of risk. It is recommended to establish Animal Bite Treatment Centers in high-risk, remote municipalities and deploy mobile vaccination units.
-    
-    **2. Mass Dog Vaccination and Stray Control**
-    A significant number of respondents report interacting with stray animals and having unvaccinated pets. The Qualitative Insights tab shows "Stray dogs roaming" as the most common cause of bites. Intensify mass dog vaccination campaigns targeting 70% coverage and enforce stricter barangay ordinances on stray animal impounding.
-    
-    **3. Intensified Information and Education Campaigns (IEC)**
-    Awareness scores show that while respondents know rabies is transmitted by bites, knowledge of proper first aid and exact ABTC locations is moderate. Conduct barangay-level health education focusing on immediate wound washing and the importance of completing the Post-Exposure Prophylaxis schedule.
-    
-    **4. Municipal-Targeted Interventions**
-    The Risk Score & Municipality tab highlights specific municipalities with high percentages of High Risk respondents. Redirect resources and prioritize interventions in these specific municipalities.
-    """)
+    with st.expander("1. Establishment of Local ABTCs and Mobile Vaccination", expanded=True):
+        st.markdown("""
+        *   **Data Basis:** The Healthcare Access tab shows a large portion of respondents live 16-30 km or more than 30 km away from an ABTC. Feature Importance identifies distance as a top predictor of risk.
+        *   **Action:** Establish Animal Bite Treatment Centers (ABTCs) in high-risk, remote municipalities and deploy mobile vaccination units.
+        """)
+        
+    with st.expander("2. Mass Dog Vaccination and Stray Control", expanded=False):
+        st.markdown("""
+        *   **Data Basis:** A significant number of respondents report interacting with stray animals and having unvaccinated pets. The Qualitative Insights tab shows "Stray dogs roaming" as the most common cause of bites.
+        *   **Action:** Intensify mass dog vaccination campaigns targeting 70% coverage and enforce stricter barangay ordinances on stray animal impounding.
+        """)
+        
+    with st.expander("3. Intensified Information and Education Campaigns (IEC)", expanded=False):
+        st.markdown("""
+        *   **Data Basis:** Awareness scores show that while respondents know rabies is transmitted by bites, knowledge of proper first aid and exact ABTC locations is moderate.
+        *   **Action:** Conduct barangay-level health education focusing on immediate wound washing and the importance of completing the Post-Exposure Prophylaxis schedule.
+        """)
+        
+    with st.expander("4. Municipal-Targeted Interventions", expanded=False):
+        st.markdown("""
+        *   **Data Basis:** The Risk Score & Municipality tab highlights specific municipalities with high percentages of High Risk respondents.
+        *   **Action:** Redirect resources and prioritize interventions in these specific municipalities based on the data-driven risk map.
+        """)
