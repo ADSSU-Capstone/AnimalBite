@@ -253,20 +253,27 @@ with tab1:
                 st.caption("This graph shows the distribution of respondents across the selected municipalities.")
             else:
                 st.markdown("**Respondents per Barangay**")
-                # Check if column exists, otherwise fallback to a generic 'Purok & Barangay' or similar
                 barangay_col = 'Purok & Barangay' 
-                if barangay_col in df.columns:
-                    # Clean up barangay names for better display (optional)
-                    df['Clean_Barangay'] = df[barangay_col].astype(str).str.replace('Purok ', '', regex=False).str.strip()
-                    brgy_counts = df['Clean_Barangay'].value_counts().reset_index().head(20) # Top 20 for readability
+                muni_col = 'Municipality in Agusan del Sur'
+                
+                if barangay_col in df.columns and muni_col in df.columns:
+                    # Clean up barangay names (remove "Purok X" and keep just the Barangay name)
+                    df['Clean_Barangay'] = df[barangay_col].astype(str).str.replace(r'Purok\s*\w*\s*', '', regex=True).str.strip()
+                    
+                    # Combine Barangay and Municipality to avoid grouping all "Poblacion" together
+                    df['Full_Location'] = df['Clean_Barangay'] + ", " + df[muni_col]
+                    
+                    # Count and get top 20
+                    brgy_counts = df['Full_Location'].value_counts().reset_index().head(20) 
                     brgy_counts.columns = ['Location', 'Count']
+                    
                     fig_loc = px.bar(brgy_counts, x='Count', y='Location', orientation='h', 
                                      color='Count', color_continuous_scale='Teal', template='plotly_white')
                     fig_loc.update_layout(coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0))
                     st.plotly_chart(fig_loc, use_container_width=True)
-                    st.caption("This graph shows the distribution of respondents across the top 20 barangays in the selected municipalities.")
+                    st.caption("This graph shows the distribution of respondents across the top 20 specific barangays (combined with their municipality).")
                 else:
-                    st.warning("Barangay column not found in dataset.")
+                    st.warning("Barangay or Municipality column not found in dataset.")
 
         with st.container(border=True):
             st.markdown("**Pet Ownership**")
