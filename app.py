@@ -13,7 +13,7 @@ from sklearn.metrics import make_scorer, accuracy_score, precision_score, recall
 
 warnings.filterwarnings('ignore')
 
-st.set_page_config(layout="wide", page_title="Animal Bite Risk Dashboard", page_icon="")
+st.set_page_config(layout="wide", page_title="Animal Bite Risk Dashboard", page_icon="🐕")
 
 st.markdown("""
     <style>
@@ -77,23 +77,29 @@ st.title("Animal Bite Risk Classification Dashboard")
 st.markdown("**Agusan del Sur: A Survey-Driven Policy Analysis for Rabies Prevention**")
 st.markdown("---")
 
+# --- SIDEBAR DATA MANAGEMENT ---
 st.sidebar.header("Data Management")
 uploaded_file = st.sidebar.file_uploader("Upload Survey Dataset (Excel)", type=["xlsx", "xls"])
 
 if uploaded_file is not None:
     try:
+        # Load data, skipping the first row (group headers) to get actual column names
         df_raw = pd.read_excel(uploaded_file, header=1)
         
+        # Clean column names (strip whitespace)
+        df_raw.columns = df_raw.columns.astype(str).str.strip()
+        
+        # Clean string data
         for col in df_raw.columns:
             if df_raw[col].dtype == 'object':
                 df_raw[col] = df_raw[col].astype(str).str.strip()
-                df_raw[col] = df_raw[col].replace(['nan', 'None', 'N/A', 'n/a', 'N/a', ''], np.nan)
+                df_raw[col] = df_raw[col].replace(['nan', 'None', 'N/A', 'n/a', 'N/a', '', 'N/A '], np.nan)
 
         if 'Age' in df_raw.columns:
             df_raw['Age'] = df_raw['Age'].astype(str).str.replace(' ', '').str.replace('–', '-')
-            age_dict = {'1825': '18-25', '2635': '26-35', '3645': '36-45', '3646': '36-45', '46andabove': '46 and above', '56andabove': '56 and above'}
+            age_dict = {'1825': '18-25', '2635': '26-35', '3645': '36-45', '3646': '36-45', '46andabove': '46 and above', '56andabove': '56 and above', '46-55': '46-55', '26-36': '26-36'}
             df_raw['Age'] = df_raw['Age'].replace(age_dict)
-        
+            
         dist_col = 'How far is the nearest animal bite center or hospital from your home?'
         if dist_col in df_raw.columns:
             df_raw[dist_col] = df_raw[dist_col].astype(str).str.replace(' ', '')
@@ -105,30 +111,38 @@ else:
     st.info("Please upload the survey dataset (e.g., FINALISM.xlsx) using the sidebar to begin.")
     st.stop()
 
+# --- RISK SCORING FUNCTION ---
 def calculate_risk_score(row):
     score = 0
-    if pd.notna(row.get('Are your pets vaccinated against rabies?')):
-        if str(row['Are your pets vaccinated against rabies?']).strip().lower() in ['none vaccinated', 'not sure']:
+    vax_col = 'Are your pets vaccinated against rabies?'
+    
+    # 1. Pet Vaccination Status
+    if pd.notna(row.get(vax_col)):
+        if str(row[vax_col]).strip().lower() in ['none vaccinated', 'not sure']:
             score += 2
     elif row.get('Do you have pets at home?') == 'Yes':
         score += 2
         
+    # 2. Stray Animal Interaction
     if pd.notna(row.get('Do you interact with stray animals in your community?')):
         if str(row['Do you interact with stray animals in your community?']).strip().lower() in ['yes', 'sometimes']:
             score += 2
             
+    # 3. First Aid Knowledge
     if pd.notna(row.get('I know the proper first aid steps to take immediately after an animal bite.')):
         try:
             if int(float(row['I know the proper first aid steps to take immediately after an animal bite.'])) <= 3:
                 score += 2
         except: pass
             
+    # 4. PEP Awareness
     if pd.notna(row.get('I know where to seek medical treatment or go to an animal bite center after an incident.')):
         try:
             if int(float(row['I know where to seek medical treatment or go to an animal bite center after an incident.'])) <= 3:
                 score += 2
         except: pass
             
+    # 5. Distance to ABTC
     if pd.notna(row.get(dist_col)):
         dist = str(row[dist_col]).strip().lower()
         if 'morethan30' in dist or '16-30' in dist:
@@ -139,6 +153,7 @@ def calculate_risk_score(row):
 df_raw['Risk_Score'] = df_raw.apply(calculate_risk_score, axis=1)
 df_raw['Risk_Level'] = pd.cut(df_raw['Risk_Score'], bins=[-1, 3, 7, 10], labels=['Low Risk', 'Moderate Risk', 'High Risk'])
 
+# --- SIDEBAR FILTERS ---
 st.sidebar.markdown("---")
 st.sidebar.header("Interactive Filters")
 
@@ -157,19 +172,36 @@ df = df_raw[
     (df_raw['Sex'].isin(selected_sex))
 ].copy()
 
+# --- KPI CALCULATIONS ---
 total_respondents = len(df)
 high_risk_count = len(df[df['Risk_Level'] == 'High Risk'])
 high_risk_pct = (high_risk_count / total_respondents) * 100 if total_respondents > 0 else 0
 bitten_count = len(df[df['Have you experienced an animal bite or scratch in the LAST 12 MONTHS?'] == 'Yes'])
 
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+vax_col = 'Are your pets vaccinated against rabies?'
+pet_owners_df = df[df['Do you have pets at home?'] == 'Yes']
+total_pet_owners = len(pet_owners_df)
+
+if vax_col in df.columns and total_pet_owners > 0:
+    unvax_count = len(pet_owners_df[
+        pet_owners_df[vax_col].astype(str).str.strip().str.lower().isin(['none vaccinated', 'not sure'])
+    ])
+    unvax_pct = (unvax_count / total_pet_owners) * 100
+    unvax_label = f"{unvax_count} ({unvax_pct:.1f}%)"
+else:
+    unvax_label = "N/A"
+
+# --- KPI ROW ---
+kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
 kpi1.metric("Filtered Respondents", f"{total_respondents}")
 kpi2.metric("Bitten in Last 12 Mos.", f"{bitten_count}")
 kpi3.metric("High Risk Respondents", f"{high_risk_count} ({high_risk_pct:.1f}%)")
 kpi4.metric("Municipalities Selected", len(selected_munis))
+kpi5.metric("Unvaccinated/Unsure Pets", unvax_label)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
+# --- TABS ---
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "Demographics & Geography", 
     "Risk Behaviors & Awareness", 
@@ -207,15 +239,35 @@ with tab1:
         
     with col2:
         with st.container(border=True):
-            st.markdown("**Respondents per Municipality**")
-            muni_counts = df['Municipality in Agusan del Sur'].value_counts().reset_index()
-            muni_counts.columns = ['Municipality', 'Count']
-            fig_muni = px.bar(muni_counts, x='Count', y='Municipality', orientation='h', 
-                              color='Count', color_continuous_scale='Blues', template='plotly_white')
-            fig_muni.update_layout(coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0))
-            st.plotly_chart(fig_muni, use_container_width=True)
-            st.caption("This graph shows the distribution of respondents across the selected municipalities, confirming the implementation of proportional stratified sampling.")
+            # NEW DROPDOWN FOR LOCATION LEVEL
+            loc_level = st.selectbox("Select Location Level", ["Respondents per Municipality", "Respondents per Barangay"])
             
+            if loc_level == "Respondents per Municipality":
+                st.markdown("**Respondents per Municipality**")
+                muni_counts = df['Municipality in Agusan del Sur'].value_counts().reset_index()
+                muni_counts.columns = ['Location', 'Count']
+                fig_loc = px.bar(muni_counts, x='Count', y='Location', orientation='h', 
+                                 color='Count', color_continuous_scale='Blues', template='plotly_white')
+                fig_loc.update_layout(coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0))
+                st.plotly_chart(fig_loc, use_container_width=True)
+                st.caption("This graph shows the distribution of respondents across the selected municipalities.")
+            else:
+                st.markdown("**Respondents per Barangay**")
+                # Check if column exists, otherwise fallback to a generic 'Purok & Barangay' or similar
+                barangay_col = 'Purok & Barangay' 
+                if barangay_col in df.columns:
+                    # Clean up barangay names for better display (optional)
+                    df['Clean_Barangay'] = df[barangay_col].astype(str).str.replace('Purok ', '', regex=False).str.strip()
+                    brgy_counts = df['Clean_Barangay'].value_counts().reset_index().head(20) # Top 20 for readability
+                    brgy_counts.columns = ['Location', 'Count']
+                    fig_loc = px.bar(brgy_counts, x='Count', y='Location', orientation='h', 
+                                     color='Count', color_continuous_scale='Teal', template='plotly_white')
+                    fig_loc.update_layout(coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0))
+                    st.plotly_chart(fig_loc, use_container_width=True)
+                    st.caption("This graph shows the distribution of respondents across the top 20 barangays in the selected municipalities.")
+                else:
+                    st.warning("Barangay column not found in dataset.")
+
         with st.container(border=True):
             st.markdown("**Pet Ownership**")
             pet_counts = df['Do you have pets at home?'].value_counts().reset_index()
@@ -225,6 +277,26 @@ with tab1:
             fig_pet.update_layout(margin=dict(l=0, r=0, t=10, b=0))
             st.plotly_chart(fig_pet, use_container_width=True)
             st.caption("This figure indicates the number of respondents who own pets at home, a major determinant of animal bite risk.")
+
+        with st.container(border=True):
+            st.markdown("**Pet Vaccination Status (Among Pet Owners)**")
+            if vax_col in df.columns:
+                vax_counts = pet_owners_df[vax_col].value_counts().reset_index()
+                vax_counts.columns = ['Vaccination Status', 'Count']
+                
+                fig_vax = px.pie(vax_counts, names='Vaccination Status', values='Count', hole=0.4,
+                                 color='Vaccination Status',
+                                 color_discrete_map={
+                                     'All vaccinated': '#2ecc71', 
+                                     'Some vaccinated': '#f1c40f', 
+                                     'None vaccinated': '#e74c3c',
+                                     'Not sure': '#95a5a6'
+                                 })
+                fig_vax.update_layout(margin=dict(l=0, r=0, t=10, b=0))
+                st.plotly_chart(fig_vax, use_container_width=True)
+                st.caption("This chart breaks down the rabies vaccination status of the pets owned by respondents, a critical factor in the risk scoring matrix.")
+            else:
+                st.warning("Vaccination column not found in dataset.")
 
 with tab2:
     st.subheader("Awareness and Risk Behaviors")
